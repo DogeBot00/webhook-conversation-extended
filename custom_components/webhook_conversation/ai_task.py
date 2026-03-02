@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .const import CONF_OUTPUT_FIELD, DEFAULT_OUTPUT_FIELD
 from .entity import WebhookConversationLLMBaseEntity
 from .models import WebhookConversationBinaryObject
 
@@ -76,13 +77,17 @@ class WebhookAITaskEntity(WebhookConversationLLMBaseEntity, ai_task.AITaskEntity
             )
 
         if self._streaming_enabled:
-            reply_parts = [
-                content_chunk
-                async for content_chunk in self._send_payload_streaming(payload)
-            ]
+            reply_parts = []
+            async for chunk_data in self._send_payload_streaming(payload):
+                if chunk_data.get("type") == "item" and "content" in chunk_data:
+                    reply_parts.append(chunk_data["content"])
             reply = "".join(reply_parts)
         else:
-            reply = await self._send_payload(payload)
+            output_field: str = self._subentry.data.get(
+                CONF_OUTPUT_FIELD, DEFAULT_OUTPUT_FIELD
+            )
+            result = await self._send_payload(payload)
+            reply = result.get(output_field)
 
         if not task.structure:
             text = reply if isinstance(reply, str) else str(reply)

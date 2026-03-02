@@ -15,14 +15,17 @@ from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,
     entity_registry as er,
+    llm,
 )
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from .const import CONF_OUTPUT_FIELD, DEFAULT_OUTPUT_FIELD, DOMAIN
 from .entity import WebhookConversationLLMBaseEntity
 from .models import WebhookConversationPayload
 
 _LOGGER = logging.getLogger(__name__)
+
+MAX_TOOL_ITERATIONS = 10
 
 
 async def async_setup_entry(
@@ -131,21 +134,39 @@ class WebhookConversationEntity(
         payload["language"] = user_input.language
         payload["user_id"] = user_input.context.user_id
 
-        if self._streaming_enabled:
-            async for _ in chat_log.async_add_delta_content_stream(
-                self.entity_id,
-                self._transform_webhook_stream(payload),
-            ):
-                pass
-        else:
-            reply = await self._send_payload(payload)
-            async for _ in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
+        output_field: str = self._subentry.data.get(
+            CONF_OUTPUT_FIELD, DEFAULT_OUTPUT_FIELD
+        )
+
+        for _iteration in range(MAX_TOOL_ITERATIONS):
+            if self._streaming_enabled:
+                async for _ in chat_log.async_add_delta_content_stream(
                     self.entity_id,
-                    reply,
-                )
-            ):
-                pass
+                    self._transform_webhook_stream(payload),
+                ):
+                    pass
+            else:
+                result = await self._send_payload(payload)
+                reply = result.get(output_field)
+                tool_calls = _parse_tool_calls(result.get("tool_calls"))
+                async for _ in chat_log.async_add_assistant_content(
+                    conversation.AssistantContent(
+                        agent_id=self.entity_id,
+                        content=reply,
+                        tool_calls=tool_calls or None,
+                    )
+                ):
+                    pass
+
+            if not chat_log.unresponded_tool_results:
+                break
+
+            payload = self._build_payload(chat_log)
+            payload["query"] = user_messages[-1]["content"]
+            payload["agent_id"] = user_input.agent_id
+            payload["device_id"] = user_input.device_id
+            payload["language"] = user_input.language
+            payload["user_id"] = user_input.context.user_id
 
     async def _transform_webhook_stream(
         self, payload: WebhookConversationPayload
@@ -153,9 +174,14 @@ class WebhookConversationEntity(
         """Transform webhook streaming content into HA format."""
         yield {"role": "assistant"}
 
-        async for content_delta in self._send_payload_streaming(payload):
-            _LOGGER.debug("Webhook streaming response: %s", content_delta)
-            yield {"content": content_delta}
+        async for chunk_data in self._send_payload_streaming(payload):
+            _LOGGER.debug("Webhook streaming response: %s", chunk_data)
+            if chunk_data.get("type") == "item" and "content" in chunk_data:
+                yield {"content": chunk_data["content"]}
+            elif chunk_data.get("type") == "tool_calls" and "tool_calls" in chunk_data:
+                tool_calls = _parse_tool_calls(chunk_data["tool_calls"])
+                if tool_calls:
+                    yield {"tool_calls": tool_calls}
 
     def _get_exposed_entities(self) -> list[dict[str, Any]]:
         states = [
@@ -203,3 +229,20 @@ class WebhookConversationEntity(
                 }
             )
         return exposed_entities
+
+
+def _parse_tool_calls(
+    raw_tool_calls: list[dict[str, Any]] | None,
+) -> list[llm.ToolInput] | None:
+    """Parse tool calls from webhook response into ToolInput objects."""
+    if not raw_tool_calls:
+        return None
+    return [
+        llm.ToolInput(
+            tool_name=tool_call["name"],
+            tool_args=tool_call.get("arguments", {}),
+            id=tool_call.get("id", ""),
+        )
+        for tool_call in raw_tool_calls
+        if "name" in tool_call
+    ] or None

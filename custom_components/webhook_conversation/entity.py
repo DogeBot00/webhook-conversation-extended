@@ -91,7 +91,9 @@ class WebhookConversationLLMBaseEntity(WebhookConversationBaseEntity):
             CONF_ENABLE_STREAMING, DEFAULT_ENABLE_STREAMING
         )
 
-    async def _send_payload(self, payload: WebhookConversationPayload) -> Any:
+    async def _send_payload(
+        self, payload: WebhookConversationPayload
+    ) -> dict[str, Any]:
         """Send the payload to the webhook."""
         _LOGGER.debug(
             "Webhook request: %s",
@@ -122,11 +124,11 @@ class WebhookConversationLLMBaseEntity(WebhookConversationBaseEntity):
             raise HomeAssistantError(f"Invalid webhook response: {result}")
 
         _LOGGER.debug("Webhook response: %s", result)
-        return result.get(output_field)
+        return result
 
     async def _send_payload_streaming(
         self, payload: WebhookConversationPayload
-    ) -> AsyncGenerator[str]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Send the payload to the webhook and stream the response."""
         _LOGGER.debug("Webhook streaming request: %s", payload)
 
@@ -152,13 +154,9 @@ class WebhookConversationLLMBaseEntity(WebhookConversationBaseEntity):
                     if line_str:
                         try:
                             chunk_data = json.loads(line_str)
-                            if (
-                                chunk_data.get("type") == "item"
-                                and "content" in chunk_data
-                            ):
-                                yield chunk_data["content"]
-                            elif chunk_data.get("type") == "end":
+                            if chunk_data.get("type") == "end":
                                 break
+                            yield chunk_data
                         except json.JSONDecodeError:
                             _LOGGER.warning(
                                 "Failed to parse streaming response chunk: %s", line_str
@@ -192,11 +190,35 @@ class WebhookConversationLLMBaseEntity(WebhookConversationBaseEntity):
         self, content: conversation.Content
     ) -> WebhookConversationMessage:
         """Convert native chat content into a simple dict."""
+        if isinstance(content, conversation.ToolResultContent):
+            return WebhookConversationMessage(
+                {
+                    "role": content.role,
+                    "content": json.dumps(content.tool_result)
+                    if content.tool_result
+                    else "",
+                    "tool_call_id": content.tool_call_id,
+                    "tool_name": content.tool_name,
+                }
+            )
+        if isinstance(content, conversation.AssistantContent) and content.tool_calls:
+            return WebhookConversationMessage(
+                {
+                    "role": content.role,
+                    "content": content.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "name": tool_call.tool_name,
+                            "arguments": tool_call.tool_args,
+                        }
+                        for tool_call in content.tool_calls
+                    ],
+                }
+            )
         return WebhookConversationMessage(
             {
                 "role": content.role,
-                "content": str(content.tool_result or "")
-                if isinstance(content, conversation.ToolResultContent)
-                else content.content or "",
+                "content": content.content or "",
             }
         )
