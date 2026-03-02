@@ -205,7 +205,8 @@ This example workflow includes:
     "mime_type": "audio/wav",
     "data": "base64_encoded_audio_content"
   },
-  "language": "en-US"
+  "language": "en-US",
+  "conversation_id": "abc123"
 }
 ```
 
@@ -216,7 +217,7 @@ This example workflow includes:
 >
 > For **TTS**: The `voice` field is only included when a specific voice is requested and the TTS service has been configured with available voices. The webhook should return audio data with an appropriate Content-Type header (e.g., "audio/wav" or "audio/mp3").
 >
-> For **STT**: The audio data is automatically converted to the appropriate format and encoded as base64. The webhook should return a JSON response with the transcribed text in the configured output field (default: "output").
+> For **STT**: The audio data is automatically converted to the appropriate format and encoded as base64. The `conversation_id` field is included when the STT request is part of a voice pipeline run, allowing you to correlate STT requests with their corresponding conversation webhook calls. The webhook should return a JSON response with the transcribed text in the configured output field (default: "output").
 
 ## Authentication
 

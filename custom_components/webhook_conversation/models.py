@@ -61,3 +61,4 @@ class WebhookSTTRequestPayload(TypedDict):
 
     audio: WebhookConversationBinaryObject
     language: str
+    conversation_id: NotRequired[str]
