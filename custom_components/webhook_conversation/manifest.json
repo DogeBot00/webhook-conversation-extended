@@ -1,6 +1,6 @@
 {
     "domain": "webhook_conversation",
-    "name": "Webhook Conversation",
+    "name": "Webhook Conversation Extended",
     "codeowners": [
         "@EuleMitKeule"
     ],
