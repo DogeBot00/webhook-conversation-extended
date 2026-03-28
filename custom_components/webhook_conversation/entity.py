@@ -90,6 +90,7 @@ class WebhookConversationLLMBaseEntity(WebhookConversationBaseEntity):
         self._streaming_enabled: bool = subentry.data.get(
             CONF_ENABLE_STREAMING, DEFAULT_ENABLE_STREAMING
         )
+        self._continue_conversation: bool = False
 
     async def _send_payload(self, payload: WebhookConversationPayload) -> Any:
         """Send the payload to the webhook."""
@@ -122,6 +123,9 @@ class WebhookConversationLLMBaseEntity(WebhookConversationBaseEntity):
             raise HomeAssistantError(f"Invalid webhook response: {result}")
 
         _LOGGER.debug("Webhook response: %s", result)
+        self._continue_conversation = bool(
+            result.get("continue_conversation", False)
+        )
         return result.get(output_field)
 
     async def _send_payload_streaming(
@@ -130,6 +134,7 @@ class WebhookConversationLLMBaseEntity(WebhookConversationBaseEntity):
         """Send the payload to the webhook and stream the response."""
         _LOGGER.debug("Webhook streaming request: %s", payload)
 
+        self._continue_conversation = False
         timeout = self._subentry.data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
         session = async_get_clientsession(self.hass)
         client_timeout = aiohttp.ClientTimeout(total=timeout)
@@ -158,6 +163,11 @@ class WebhookConversationLLMBaseEntity(WebhookConversationBaseEntity):
                             ):
                                 yield chunk_data["content"]
                             elif chunk_data.get("type") == "end":
+                                self._continue_conversation = bool(
+                                    chunk_data.get(
+                                        "continue_conversation", False
+                                    )
+                                )
                                 break
                         except json.JSONDecodeError:
                             _LOGGER.warning(

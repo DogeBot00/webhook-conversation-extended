@@ -86,9 +86,12 @@ class WebhookConversationEntity(
         except conversation.ConverseError as err:
             return err.as_conversation_result()
 
+        self._continue_conversation = False
         await self._async_handle_chat_log(user_input, chat_log)
 
-        return conversation.async_get_result_from_chat_log(user_input, chat_log)
+        result = conversation.async_get_result_from_chat_log(user_input, chat_log)
+        result.continue_conversation = self._continue_conversation
+        return result
 
     async def _async_handle_chat_log(
         self,
